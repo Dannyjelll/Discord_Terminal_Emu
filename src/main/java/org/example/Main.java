@@ -7,16 +7,15 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.FileUpload;
 import okhttp3.OkHttpClient;
 
 import javax.net.ssl.*;
-import javax.security.auth.login.LoginException;
 import java.io.*;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -25,8 +24,11 @@ public class Main extends ListenerAdapter {
     private Process terminalProcess;
     private BufferedReader terminalReader;
     private BufferedWriter terminalWriter;
-    private boolean inTerminalSession = true;
+    private boolean inTerminalSession = false;
     private static final long ALLOWED_USER_ID = 1301118861634174976L;
+    private StringBuilder outputBuffer = new StringBuilder();
+    private ScheduledExecutorService scheduler;
+
     public static void main(String[] args) throws Exception {
         // Set up SSL context to bypass certificate validation
         TrustManager[] trustAllCerts = new TrustManager[]{
@@ -76,14 +78,11 @@ public class Main extends ListenerAdapter {
         else if (inTerminalSession) {
             sendToTerminal(message, event.getChannel());
         }
-
     }
 
     private void startTerminal(MessageChannel channel) {
-        StringBuilder outputBuffer = new StringBuilder();
-        ProcessBuilder processBuilder;
-
         String os = System.getProperty("os.name").toLowerCase();
+        ProcessBuilder processBuilder;
         if (os.contains("win")) {
             processBuilder = new ProcessBuilder("cmd.exe", "/K");
         } else {
@@ -112,47 +111,39 @@ public class Main extends ListenerAdapter {
                 try {
                     String line;
                     while ((line = terminalReader.readLine()) != null) {
-                        channel.sendMessage("```\n" + line + "```").queue();
+                        outputBuffer.append(line).append("\n");
+                        System.out.println(line); // Output to server console
+
+                        // If the buffer exceeds 1900 characters, send it as a text file
+                        if (outputBuffer.length() > 1900) {
+                            File tempFile = File.createTempFile("terminal_output", ".txt");
+                            try (FileWriter fw = new FileWriter(tempFile)) {
+                                fw.write(outputBuffer.toString());
+                            }
+                            channel.sendMessage("Terminal output exceeds 1900 characters, sending as a text file:").queue();
+                            channel.sendFiles(FileUpload.fromData(tempFile, "terminal_output.txt")).queue();
+                            outputBuffer.setLength(0);
+                        }
                     }
                 } catch (IOException e) {
                     channel.sendMessage("Error reading from terminal: " + e.getMessage()).queue();
+                    System.out.println("Error reading from terminal: " + e.getMessage());
                 }
             }).start();
 
-            // Start a thread to handle terminal input
-            new Thread(() -> {
-                try {
-                    while (inTerminalSession) {
-                        String input = waitForUserInput(channel);
-                        if (input != null) {
-                            sendToTerminal(input, channel);
-                        }
-                    }
-                } catch (Exception e) {
-                    channel.sendMessage("Error handling terminal input: " + e.getMessage()).queue();
+            // Start a scheduled task to send the output buffer to the channel
+            scheduler = Executors.newSingleThreadScheduledExecutor();
+            scheduler.scheduleAtFixedRate(() -> {
+                if (outputBuffer.length() > 0) {
+                    channel.sendMessage("```\n" + outputBuffer.toString().trim() + "\n```").queue();
+                    outputBuffer.setLength(0);
                 }
-            }).start();
+            }, 2, 2, TimeUnit.SECONDS);
 
         } catch (IOException e) {
             channel.sendMessage("Error starting terminal: " + e.getMessage()).queue();
+            System.out.println("Error starting terminal: " + e.getMessage());
         }
-    }
-
-    private String waitForUserInput(MessageChannel channel) {
-        long startTime = System.currentTimeMillis();
-        while (System.currentTimeMillis() - startTime < 30000) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                // Ignore
-            }
-            // Check for new messages in the channel
-            List<Message> messages = channel.getHistory().retrievePast(1).complete();
-            if (!messages.isEmpty() && !messages.get(0).getAuthor().isBot()) {
-                return messages.get(0).getContentRaw();
-            }
-        }
-        return null;
     }
 
     private void sendToTerminal(String command, MessageChannel channel) {
@@ -162,6 +153,7 @@ public class Main extends ListenerAdapter {
             terminalWriter.flush();
         } catch (IOException e) {
             channel.sendMessage("Error sending command to terminal: " + e.getMessage()).queue();
+            System.out.println("Error sending command to terminal: " + e.getMessage());
         }
     }
 
@@ -171,9 +163,10 @@ public class Main extends ListenerAdapter {
                 terminalProcess.destroy();
             }
             inTerminalSession = false;
+            scheduler.shutdownNow();
         } catch (Exception e) {
             e.printStackTrace();
+            System.out.println("Error stopping terminal: " + e.getMessage());
         }
     }
-
 }
