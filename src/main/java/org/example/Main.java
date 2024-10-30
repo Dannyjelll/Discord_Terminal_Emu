@@ -23,7 +23,7 @@ public class Main extends ListenerAdapter {
     private Process terminalProcess;
     private BufferedReader terminalReader;
     private BufferedWriter terminalWriter;
-    private boolean inTerminalSession = false;
+    private boolean inTerminalSession = true;
     private static final long ALLOWED_USER_ID = 1301118861634174976L;
     public static void main(String[] args) throws Exception {
         // Set up SSL context to bypass certificate validation
@@ -75,33 +75,6 @@ public class Main extends ListenerAdapter {
             sendToTerminal(message, event.getChannel());
         }
 
-        // Get user and message information
-        String username = event.getAuthor().getName();
-
-        // Change the format of the timestamp to avoid illegal characters in Windows file names
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss"));
-
-        // Check if message content is empty
-        if (message.isEmpty()) {
-            System.out.println("Message is empty, nothing to log.");
-            return;
-        }
-
-        // Create a folder named after the user if it doesn't exist
-        File userFolder = new File("messages/" + username);
-        if (!userFolder.exists()) {
-            userFolder.mkdirs();
-        }
-
-        // Create a unique file for each message using the current timestamp
-        File messageFile = new File(userFolder, "Message " + timestamp + ".txt");
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(messageFile))) {
-            writer.write("\"" + message + "\" TIMESTAMP: " + timestamp);
-            System.out.println("Saved message from " + username + ": " + message);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
     }
 
     private void startTerminal(MessageChannel channel) {
@@ -159,13 +132,6 @@ public class Main extends ListenerAdapter {
             channel.sendMessage("Error starting terminal: " + e.getMessage()).queue();
         }
     }
-
-
-
-
-
-
-
 
     private void stopTerminal() {
         try {
